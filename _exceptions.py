@@ -1,162 +1,161 @@
-"""
-Various richly-typed exceptions, that also help us deal with string formatting
-in python where it's easier.
+# File generated from our OpenAPI spec by Stainless. See CONTRIBUTING.md for details.
 
-By putting the formatting in `__str__`, we also avoid paying the cost for
-users who silence the exceptions.
-"""
+from __future__ import annotations
 
-def _unpack_tuple(tup):
-    if len(tup) == 1:
-        return tup[0]
-    else:
-        return tup
+from typing import TYPE_CHECKING, Any, Optional, cast
+from typing_extensions import Literal
+
+import httpx
+
+from ._utils import is_dict
+from ._models import construct_type
+
+if TYPE_CHECKING:
+    from .types.chat import ChatCompletion
+
+__all__ = [
+    "BadRequestError",
+    "AuthenticationError",
+    "PermissionDeniedError",
+    "NotFoundError",
+    "ConflictError",
+    "UnprocessableEntityError",
+    "RateLimitError",
+    "InternalServerError",
+    "LengthFinishReasonError",
+    "ContentFilterFinishReasonError",
+    "InvalidWebhookSignatureError",
+]
 
 
-def _display_as_base(cls):
+class OpenAIError(Exception):
+    pass
+
+
+class APIError(OpenAIError):
+    message: str
+    request: httpx.Request
+
+    body: object | None
+    """The API response body.
+
+    If the API responded with a valid JSON structure then this property will be the
+    decoded result.
+
+    If it isn't a valid JSON structure then this will be the raw response.
+
+    If there was no response associated with this error then it will be `None`.
     """
-    A decorator that makes an exception class look like its base.
 
-    We use this to hide subclasses that are implementation details - the user
-    should catch the base type, which is what the traceback will show them.
+    code: Optional[str] = None
+    param: Optional[str] = None
+    type: Optional[str]
 
-    Classes decorated with this decorator are subject to removal without a
-    deprecation warning.
-    """
-    assert issubclass(cls, Exception)
-    cls.__name__ = cls.__base__.__name__
-    return cls
+    def __init__(self, message: str, request: httpx.Request, *, body: object | None) -> None:
+        super().__init__(message)
+        self.request = request
+        self.message = message
+        self.body = body
 
-
-class UFuncTypeError(TypeError):
-    """ Base class for all ufunc exceptions """
-    def __init__(self, ufunc):
-        self.ufunc = ufunc
-
-
-@_display_as_base
-class _UFuncNoLoopError(UFuncTypeError):
-    """ Thrown when a ufunc loop cannot be found """
-    def __init__(self, ufunc, dtypes):
-        super().__init__(ufunc)
-        self.dtypes = tuple(dtypes)
-
-    def __str__(self):
-        return (
-            f"ufunc {self.ufunc.__name__!r} did not contain a loop with signature "
-            f"matching types {_unpack_tuple(self.dtypes[:self.ufunc.nin])!r} "
-            f"-> {_unpack_tuple(self.dtypes[self.ufunc.nin:])!r}"
-        )
-
-
-@_display_as_base
-class _UFuncBinaryResolutionError(_UFuncNoLoopError):
-    """ Thrown when a binary resolution fails """
-    def __init__(self, ufunc, dtypes):
-        super().__init__(ufunc, dtypes)
-        assert len(self.dtypes) == 2
-
-    def __str__(self):
-        return (
-            "ufunc {!r} cannot use operands with types {!r} and {!r}"
-        ).format(
-            self.ufunc.__name__, *self.dtypes
-        )
-
-
-@_display_as_base
-class _UFuncCastingError(UFuncTypeError):
-    def __init__(self, ufunc, casting, from_, to):
-        super().__init__(ufunc)
-        self.casting = casting
-        self.from_ = from_
-        self.to = to
-
-
-@_display_as_base
-class _UFuncInputCastingError(_UFuncCastingError):
-    """ Thrown when a ufunc input cannot be casted """
-    def __init__(self, ufunc, casting, from_, to, i):
-        super().__init__(ufunc, casting, from_, to)
-        self.in_i = i
-
-    def __str__(self):
-        # only show the number if more than one input exists
-        i_str = f"{self.in_i} " if self.ufunc.nin != 1 else ""
-        return (
-            f"Cannot cast ufunc {self.ufunc.__name__!r} input {i_str}from "
-            f"{self.from_!r} to {self.to!r} with casting rule {self.casting!r}"
-        )
-
-
-@_display_as_base
-class _UFuncOutputCastingError(_UFuncCastingError):
-    """ Thrown when a ufunc output cannot be casted """
-    def __init__(self, ufunc, casting, from_, to, i):
-        super().__init__(ufunc, casting, from_, to)
-        self.out_i = i
-
-    def __str__(self):
-        # only show the number if more than one output exists
-        i_str = f"{self.out_i} " if self.ufunc.nout != 1 else ""
-        return (
-            f"Cannot cast ufunc {self.ufunc.__name__!r} output {i_str}from "
-            f"{self.from_!r} to {self.to!r} with casting rule {self.casting!r}"
-        )
-
-
-@_display_as_base
-class _ArrayMemoryError(MemoryError):
-    """ Thrown when an array cannot be allocated"""
-    def __init__(self, shape, dtype):
-        self.shape = shape
-        self.dtype = dtype
-
-    @property
-    def _total_size(self):
-        num_bytes = self.dtype.itemsize
-        for dim in self.shape:
-            num_bytes *= dim
-        return num_bytes
-
-    @staticmethod
-    def _size_to_string(num_bytes):
-        """ Convert a number of bytes into a binary size string """
-
-        # https://en.wikipedia.org/wiki/Binary_prefix
-        LOG2_STEP = 10
-        STEP = 1024
-        units = ['bytes', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB']
-
-        unit_i = max(num_bytes.bit_length() - 1, 1) // LOG2_STEP
-        unit_val = 1 << (unit_i * LOG2_STEP)
-        n_units = num_bytes / unit_val
-        del unit_val
-
-        # ensure we pick a unit that is correct after rounding
-        if round(n_units) == STEP:
-            unit_i += 1
-            n_units /= STEP
-
-        # deal with sizes so large that we don't have units for them
-        if unit_i >= len(units):
-            new_unit_i = len(units) - 1
-            n_units *= 1 << ((unit_i - new_unit_i) * LOG2_STEP)
-            unit_i = new_unit_i
-
-        unit_name = units[unit_i]
-        # format with a sensible number of digits
-        if unit_i == 0:
-            # no decimal point on bytes
-            return f'{n_units:.0f} {unit_name}'
-        elif round(n_units) < 1000:
-            # 3 significant figures, if none are dropped to the left of the .
-            return f'{n_units:#.3g} {unit_name}'
+        if is_dict(body):
+            self.code = cast(Any, construct_type(type_=Optional[str], value=body.get("code")))
+            self.param = cast(Any, construct_type(type_=Optional[str], value=body.get("param")))
+            self.type = cast(Any, construct_type(type_=str, value=body.get("type")))
         else:
-            # just give all the digits otherwise
-            return f'{n_units:#.0f} {unit_name}'
+            self.code = None
+            self.param = None
+            self.type = None
 
-    def __str__(self):
-        size_str = self._size_to_string(self._total_size)
-        return (f"Unable to allocate {size_str} for an array with shape "
-                f"{self.shape} and data type {self.dtype}")
+
+class APIResponseValidationError(APIError):
+    response: httpx.Response
+    status_code: int
+
+    def __init__(self, response: httpx.Response, body: object | None, *, message: str | None = None) -> None:
+        super().__init__(message or "Data returned by API invalid for expected schema.", response.request, body=body)
+        self.response = response
+        self.status_code = response.status_code
+
+
+class APIStatusError(APIError):
+    """Raised when an API response has a status code of 4xx or 5xx."""
+
+    response: httpx.Response
+    status_code: int
+    request_id: str | None
+
+    def __init__(self, message: str, *, response: httpx.Response, body: object | None) -> None:
+        super().__init__(message, response.request, body=body)
+        self.response = response
+        self.status_code = response.status_code
+        self.request_id = response.headers.get("x-request-id")
+
+
+class APIConnectionError(APIError):
+    def __init__(self, *, message: str = "Connection error.", request: httpx.Request) -> None:
+        super().__init__(message, request, body=None)
+
+
+class APITimeoutError(APIConnectionError):
+    def __init__(self, request: httpx.Request) -> None:
+        super().__init__(message="Request timed out.", request=request)
+
+
+class BadRequestError(APIStatusError):
+    status_code: Literal[400] = 400  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class AuthenticationError(APIStatusError):
+    status_code: Literal[401] = 401  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class PermissionDeniedError(APIStatusError):
+    status_code: Literal[403] = 403  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class NotFoundError(APIStatusError):
+    status_code: Literal[404] = 404  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class ConflictError(APIStatusError):
+    status_code: Literal[409] = 409  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class UnprocessableEntityError(APIStatusError):
+    status_code: Literal[422] = 422  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class RateLimitError(APIStatusError):
+    status_code: Literal[429] = 429  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class InternalServerError(APIStatusError):
+    pass
+
+
+class LengthFinishReasonError(OpenAIError):
+    completion: ChatCompletion
+    """The completion that caused this error.
+
+    Note: this will *not* be a complete `ChatCompletion` object when streaming as `usage`
+          will not be included.
+    """
+
+    def __init__(self, *, completion: ChatCompletion) -> None:
+        msg = "Could not parse response content as the length limit was reached"
+        if completion.usage:
+            msg += f" - {completion.usage}"
+
+        super().__init__(msg)
+        self.completion = completion
+
+
+class ContentFilterFinishReasonError(OpenAIError):
+    def __init__(self) -> None:
+        super().__init__(
+            f"Could not parse response content as the request was rejected by the content filter",
+        )
+
+
+class InvalidWebhookSignatureError(ValueError):
+    """Raised when a webhook signature is invalid, meaning the computed signature does not match the expected signature."""
