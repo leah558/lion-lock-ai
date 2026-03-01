@@ -1,201 +1,231 @@
 """
-Contains the core of NumPy: ndarray, ufuncs, dtypes, etc.
+============================
+Typing (:mod:`numpy.typing`)
+============================
 
-Please note that this module is private.  All functions and objects
-are available in the main ``numpy`` namespace - use that instead.
+.. versionadded:: 1.20
+
+Large parts of the NumPy API have :pep:`484`-style type annotations. In
+addition a number of type aliases are available to users, most prominently
+the two below:
+
+- `ArrayLike`: objects that can be converted to arrays
+- `DTypeLike`: objects that can be converted to dtypes
+
+.. _typing-extensions: https://pypi.org/project/typing-extensions/
+
+Mypy plugin
+-----------
+
+.. versionadded:: 1.21
+
+.. automodule:: numpy.typing.mypy_plugin
+
+.. currentmodule:: numpy.typing
+
+Differences from the runtime NumPy API
+--------------------------------------
+
+NumPy is very flexible. Trying to describe the full range of
+possibilities statically would result in types that are not very
+helpful. For that reason, the typed NumPy API is often stricter than
+the runtime NumPy API. This section describes some notable
+differences.
+
+ArrayLike
+~~~~~~~~~
+
+The `ArrayLike` type tries to avoid creating object arrays. For
+example,
+
+.. code-block:: python
+
+    >>> np.array(x**2 for x in range(10))
+    array(<generator object <genexpr> at ...>, dtype=object)
+
+is valid NumPy code which will create a 0-dimensional object
+array. Type checkers will complain about the above example when using
+the NumPy types however. If you really intended to do the above, then
+you can either use a ``# type: ignore`` comment:
+
+.. code-block:: python
+
+    >>> np.array(x**2 for x in range(10))  # type: ignore
+
+or explicitly type the array like object as `~typing.Any`:
+
+.. code-block:: python
+
+    >>> from typing import Any
+    >>> array_like: Any = (x**2 for x in range(10))
+    >>> np.array(array_like)
+    array(<generator object <genexpr> at ...>, dtype=object)
+
+ndarray
+~~~~~~~
+
+It's possible to mutate the dtype of an array at runtime. For example,
+the following code is valid:
+
+.. code-block:: python
+
+    >>> x = np.array([1, 2])
+    >>> x.dtype = np.bool
+
+This sort of mutation is not allowed by the types. Users who want to
+write statically typed code should instead use the `numpy.ndarray.view`
+method to create a view of the array with a different dtype.
+
+DTypeLike
+~~~~~~~~~
+
+The `DTypeLike` type tries to avoid creation of dtype objects using
+dictionary of fields like below:
+
+.. code-block:: python
+
+    >>> x = np.dtype({"field1": (float, 1), "field2": (int, 3)})
+
+Although this is valid NumPy code, the type checker will complain about it,
+since its usage is discouraged.
+Please see : :ref:`Data type objects <arrays.dtypes>`
+
+Number precision
+~~~~~~~~~~~~~~~~
+
+The precision of `numpy.number` subclasses is treated as a invariant generic
+parameter (see :class:`~NBitBase`), simplifying the annotating of processes
+involving precision-based casting.
+
+.. code-block:: python
+
+    >>> from typing import TypeVar
+    >>> import numpy as np
+    >>> import numpy.typing as npt
+
+    >>> T = TypeVar("T", bound=npt.NBitBase)
+    >>> def func(a: np.floating[T], b: np.floating[T]) -> np.floating[T]:
+    ...     ...
+
+Consequently, the likes of `~numpy.float16`, `~numpy.float32` and
+`~numpy.float64` are still sub-types of `~numpy.floating`, but, contrary to
+runtime, they're not necessarily considered as sub-classes.
+
+.. deprecated:: 2.3
+    The :class:`~numpy.typing.NBitBase` helper is deprecated and will be
+    removed in a future release. Prefer expressing precision relationships via
+    ``typing.overload`` or ``TypeVar`` definitions bounded by concrete scalar
+    classes. For example:
+
+    .. code-block:: python
+
+        from typing import TypeVar
+        import numpy as np
+
+        S = TypeVar("S", bound=np.floating)
+
+        def func(a: S, b: S) -> S:
+            ...
+
+    or in the case of different input types mapping to different output types:
+
+   .. code-block:: python
+
+        from typing import overload
+        import numpy as np
+
+        @overload
+        def phase(x: np.complex64) -> np.float32: ...
+        @overload
+        def phase(x: np.complex128) -> np.float64: ...
+        @overload
+        def phase(x: np.clongdouble) -> np.longdouble: ...
+        def phase(x: np.complexfloating) -> np.floating:
+            ...
+
+Timedelta64
+~~~~~~~~~~~
+
+The `~numpy.timedelta64` class is not considered a subclass of
+`~numpy.signedinteger`, the former only inheriting from `~numpy.generic`
+while static type checking.
+
+0D arrays
+~~~~~~~~~
+
+During runtime numpy aggressively casts any passed 0D arrays into their
+corresponding `~numpy.generic` instance. Until the introduction of shape
+typing (see :pep:`646`) it is unfortunately not possible to make the
+necessary distinction between 0D and >0D arrays. While thus not strictly
+correct, all operations that can potentially perform a 0D-array -> scalar
+cast are currently annotated as exclusively returning an `~numpy.ndarray`.
+
+If it is known in advance that an operation *will* perform a
+0D-array -> scalar cast, then one can consider manually remedying the
+situation with either `typing.cast` or a ``# type: ignore`` comment.
+
+Record array dtypes
+~~~~~~~~~~~~~~~~~~~
+
+The dtype of `numpy.recarray`, and the :ref:`routines.array-creation.rec`
+functions in general, can be specified in one of two ways:
+
+* Directly via the ``dtype`` argument.
+* With up to five helper arguments that operate via `numpy.rec.format_parser`:
+  ``formats``, ``names``, ``titles``, ``aligned`` and ``byteorder``.
+
+These two approaches are currently typed as being mutually exclusive,
+*i.e.* if ``dtype`` is specified than one may not specify ``formats``.
+While this mutual exclusivity is not (strictly) enforced during runtime,
+combining both dtype specifiers can lead to unexpected or even downright
+buggy behavior.
+
+API
+---
 
 """
+# NOTE: The API section will be appended with additional entries
+# further down in this file
 
-import os
+# pyright: reportDeprecated=false
 
-from numpy.version import version as __version__
+from numpy._typing import ArrayLike, DTypeLike, NBitBase, NDArray
 
-# disables OpenBLAS affinity setting of the main thread that limits
-# python threads or processes to one core
-env_added = []
-for envkey in ['OPENBLAS_MAIN_FREE']:
-    if envkey not in os.environ:
-        # Note: using `putenv` (and `unsetenv` further down) instead of updating
-        # `os.environ` on purpose to avoid a race condition, see gh-30627.
-        os.putenv(envkey, '1')
-        env_added.append(envkey)
-
-try:
-    from . import multiarray
-except ImportError as exc:
-    import sys
-
-    # Bypass for the module re-initialization opt-out
-    if exc.msg == "cannot load module more than once per process":
-        raise
-
-    # Basically always, the problem should be that the C module is wrong/missing...
-    if (
-        isinstance(exc, ModuleNotFoundError)
-        and exc.name == "numpy._core._multiarray_umath"
-    ):
-        import sys
-        candidates = []
-        for path in __path__:
-            candidates.extend(
-                f for f in os.listdir(path) if f.startswith("_multiarray_umath"))
-        if len(candidates) == 0:
-            bad_c_module_info = (
-                "We found no compiled module, did NumPy build successfully?\n")
-        else:
-            candidate_str = '\n  * '.join(candidates)
-            # cache_tag is documented to be possibly None, so just use name if it is
-            # this guesses at cache_tag being the same as the extension module scheme
-            tag = sys.implementation.cache_tag or sys.implementation.name
-            bad_c_module_info = (
-                f"The following compiled module files exist, but seem incompatible\n"
-                f"with with either python '{tag}' or the "
-                f"platform '{sys.platform}':\n\n  * {candidate_str}\n"
-            )
-    else:
-        bad_c_module_info = ""
-
-    major, minor, *_ = sys.version_info
-    msg = f"""
-
-IMPORTANT: PLEASE READ THIS FOR ADVICE ON HOW TO SOLVE THIS ISSUE!
-
-Importing the numpy C-extensions failed. This error can happen for
-many reasons, often due to issues with your setup or how NumPy was
-installed.
-{bad_c_module_info}
-We have compiled some common reasons and troubleshooting tips at:
-
-    https://numpy.org/devdocs/user/troubleshooting-importerror.html
-
-Please note and check the following:
-
-  * The Python version is: Python {major}.{minor} from "{sys.executable}"
-  * The NumPy version is: "{__version__}"
-
-and make sure that they are the versions you expect.
-
-Please carefully study the information and documentation linked above.
-This is unlikely to be a NumPy issue but will be caused by a bad install
-or environment on your machine.
-
-Original error was: {exc}
-"""
-
-    raise ImportError(msg) from exc
-finally:
-    for envkey in env_added:
-        os.unsetenv(envkey)
-del envkey
-del env_added
-del os
-
-from . import umath
-
-# Check that multiarray,umath are pure python modules wrapping
-# _multiarray_umath and not either of the old c-extension modules
-if not (hasattr(multiarray, '_multiarray_umath') and
-        hasattr(umath, '_multiarray_umath')):
-    import sys
-    path = sys.modules['numpy'].__path__
-    msg = ("Something is wrong with the numpy installation. "
-        "While importing we detected an older version of "
-        "numpy in {}. One method of fixing this is to repeatedly uninstall "
-        "numpy until none is found, then reinstall this version.")
-    raise ImportError(msg.format(path))
-
-from . import numerictypes as nt
-from .numerictypes import sctypeDict, sctypes
-
-multiarray.set_typeDict(nt.sctypeDict)
-from . import einsumfunc, fromnumeric, function_base, getlimits, numeric, shape_base
-from .einsumfunc import *
-from .fromnumeric import *
-from .function_base import *
-from .getlimits import *
-
-# Note: module name memmap is overwritten by a class with same name
-from .memmap import *
-from .numeric import *
-from .records import recarray, record
-from .shape_base import *
-
-del nt
-
-# do this after everything else, to minimize the chance of this misleadingly
-# appearing in an import-time traceback
-# add these for module-freeze analysis (like PyInstaller)
-from . import (
-    _add_newdocs,
-    _add_newdocs_scalars,
-    _dtype,
-    _dtype_ctypes,
-    _internal,
-    _methods,
-)
-from .numeric import absolute as abs
-
-acos = numeric.arccos
-acosh = numeric.arccosh
-asin = numeric.arcsin
-asinh = numeric.arcsinh
-atan = numeric.arctan
-atanh = numeric.arctanh
-atan2 = numeric.arctan2
-concat = numeric.concatenate
-bitwise_left_shift = numeric.left_shift
-bitwise_invert = numeric.invert
-bitwise_right_shift = numeric.right_shift
-permute_dims = numeric.transpose
-pow = numeric.power
-
-__all__ = [
-    "abs", "acos", "acosh", "asin", "asinh", "atan", "atanh", "atan2",
-    "bitwise_invert", "bitwise_left_shift", "bitwise_right_shift", "concat",
-    "pow", "permute_dims", "memmap", "sctypeDict", "record", "recarray"
-]
-__all__ += numeric.__all__
-__all__ += function_base.__all__
-__all__ += getlimits.__all__
-__all__ += shape_base.__all__
-__all__ += einsumfunc.__all__
+__all__ = ["ArrayLike", "DTypeLike", "NBitBase", "NDArray"]
 
 
-def _ufunc_reduce(func):
-    # Report the `__name__`. pickle will try to find the module. Note that
-    # pickle supports for this `__name__` to be a `__qualname__`. It may
-    # make sense to add a `__qualname__` to ufuncs, to allow this more
-    # explicitly (Numba has ufuncs as attributes).
-    # See also: https://github.com/dask/distributed/issues/3450
-    return func.__name__
+__DIR = __all__ + [k for k in globals() if k.startswith("__") and k.endswith("__")]
+__DIR_SET = frozenset(__DIR)
 
 
-def _DType_reconstruct(scalar_type):
-    # This is a work-around to pickle type(np.dtype(np.float64)), etc.
-    # and it should eventually be replaced with a better solution, e.g. when
-    # DTypes become HeapTypes.
-    return type(dtype(scalar_type))
+def __dir__() -> list[str]:
+    return __DIR
+
+def __getattr__(name: str) -> object:
+    if name == "NBitBase":
+        import warnings
+
+        # Deprecated in NumPy 2.3, 2025-05-01
+        warnings.warn(
+            "`NBitBase` is deprecated and will be removed from numpy.typing in the "
+            "future. Use `@typing.overload` or a `TypeVar` with a scalar-type as upper "
+            "bound, instead. (deprecated in NumPy 2.3)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return NBitBase
+
+    if name in __DIR_SET:
+        return globals()[name]
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def _DType_reduce(DType):
-    # As types/classes, most DTypes can simply be pickled by their name:
-    if not DType._legacy or DType.__module__ == "numpy.dtypes":
-        return DType.__name__
-
-    # However, user defined legacy dtypes (like rational) do not end up in
-    # `numpy.dtypes` as module and do not have a public class at all.
-    # For these, we pickle them by reconstructing them from the scalar type:
-    scalar_type = DType.type
-    return _DType_reconstruct, (scalar_type,)
-
-
-import copyreg
-
-copyreg.pickle(ufunc, _ufunc_reduce)
-copyreg.pickle(type(dtype), _DType_reduce, _DType_reconstruct)
-
-# Unclutter namespace (must keep _*_reconstruct for unpickling)
-del copyreg, _ufunc_reduce, _DType_reduce
+if __doc__ is not None:
+    from numpy._typing._add_docstring import _docstrings
+    __doc__ += _docstrings
+    __doc__ += '\n.. autoclass:: numpy.typing.NBitBase\n'
+    del _docstrings
 
 from numpy._pytesttester import PytestTester
 
