@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lion Lock AI</title>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 900px;
+      margin: auto;
+      padding: 20px;
+    }
+
+    textarea {
+      width: 100%;
+      height: 120px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+
+    button {
+      padding: 8px 16px;
+      cursor: pointer;
+    }
+
+    .score {
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    .box {
+      background: #f5f5f5;
+      padding: 15px;
+      border-radius: 6px;
+      margin-top: 15px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>🦁 Lion Lock AI</h1>
+
+  <!-- Add Past Email -->
+  <h2>Add Past Email</h2>
+  <form method="post">
+    <textarea name="email" placeholder="Paste one of their past emails here"></textarea>
+    <button type="submit" name="action" value="add">Add Email</button>
+  </form>
+
+  {% if emails %}
+    <div class="box">
+      <h3>Stored Emails ({{ emails|length }})</h3>
+      <ul>
+        {% for e in emails %}
+          <li>{{ e[:60] }}...</li>
+        {% endfor %}
+      </ul>
+      <a href="{{ url_for('clear') }}">Clear all</a>
+    </div>
+  {% endif %}
+
+  <hr>
+
+  <!-- Compare New Email -->
+  <h2>Compare New Email</h2>
+  <form method="post">
+    <textarea name="new_email" placeholder="Paste the new email here"></textarea>
+    <button type="submit" name="action" value="compare">Compare Style</button>
+  </form>
+
+  {% if tfidf_score is not none %}
+    <div class="box">
+      <p class="score">
+        Gemini Similarity Score:
+        {{ "%.3f"|format(tfidf_score) }}
+      </p>
+      <p>(0.0 = very different, 1.0 = very similar)</p>
+    </div>
+  {% endif %}
+
+  {% if gemini_score is not none %}
+    <div class="box">
+      <h3>Gemini AI Result</h3>
+      <p class="score">
+        Similarity Score: {{ gemini_score }}
+      </p>
+      <pre>{{ gemini_explanation }}</pre>
+    </div>
+  {% endif %}
+
+</body>
+</html>

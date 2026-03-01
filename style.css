@@ -1,0 +1,18 @@
+body {
+    background-color: #0f228e;   /* dark blue; you can use any hex/colour */
+    color: #fff;                 /* make the text readable */
+    margin: 5em;
+    padding: 0;
+}
+
+p {
+    color:black
+}
+
+h3 {
+    color:black
+}
+
+ul {
+    color:black
+}
